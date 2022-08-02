@@ -83,6 +83,29 @@ class MLPRender_Fea(torch.nn.Module):
 
         return rgb
 
+
+class MLPRender_Density(torch.nn.Module):
+    def __init__(self,inChanel, feape=6, featureC=128):
+        super(MLPRender_Density, self).__init__()
+
+        self.in_mlpC = 2*feape*inChanel + 3 + inChanel
+        self.feape = feape
+        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
+        layer2 = torch.nn.Linear(featureC, 1)
+
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2)
+        torch.nn.init.constant_(self.mlp[-1].bias, 0)
+
+    def forward(self, pts, features):
+        indata = [features]
+        if self.feape > 0:
+            indata += [positional_encoding(features, self.feape)]
+        mlp_in = torch.cat(indata, dim=-1)
+        rgb = self.mlp(mlp_in)
+        rgb = torch.sigmoid(rgb)
+
+        return rgb
+
 class MLPRender_PE(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):
         super(MLPRender_PE, self).__init__()
@@ -187,8 +210,14 @@ class TensorBase(torch.nn.Module):
         else:
             print("Unrecognized shading module")
             exit()
+
+        # add density MLP
+        self.densityRenderModule = MLPRender_Density(self.app_dim, fea_pe, featureC).to(device)
+
         print("pos_pe", pos_pe, "view_pe", view_pe, "fea_pe", fea_pe)
         print(self.renderModule)
+        # add density MLP
+        print(self.densityRenderModule)
 
     def update_stepSize(self, gridSize):
         print("aabb", self.aabb.view(-1))
