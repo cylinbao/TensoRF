@@ -71,6 +71,8 @@ def config_parser(cmd=None):
                         help='shift density in softplus; making density = 0  when feature == 0')
                         
     # network decoder
+    parser.add_argument("--densityRender", type=str, default="Sum", choices=['Sum', 'MLP'],
+            help='which shading mode to use')
     parser.add_argument("--shadingMode", type=str, default="MLP_PE",
                         help='which shading mode to use')
     parser.add_argument("--pos_pe", type=int, default=6,

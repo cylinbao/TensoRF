@@ -85,26 +85,31 @@ class MLPRender_Fea(torch.nn.Module):
 
 
 class MLPRender_Density(torch.nn.Module):
-    def __init__(self,inChanel, feape=6, featureC=128):
+    def __init__(self, inChanel, feape=6, fea2denseAct="softplus", density_shift=None):
         super(MLPRender_Density, self).__init__()
 
-        self.in_mlpC = 2*feape*inChanel + 3 + inChanel
+        self.in_mlpC = 2*feape*inChanel + inChanel
         self.feape = feape
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, 1)
+        self.fea2denseAct = fea2denseAct
+        self.density_shift = density_shift
+        layer1 = torch.nn.Linear(self.in_mlpC, 1)
 
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2)
+        self.mlp = torch.nn.Sequential(layer1)
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
-    def forward(self, pts, features):
+    def forward(self, features, denseAct="softplus"):
         indata = [features]
         if self.feape > 0:
             indata += [positional_encoding(features, self.feape)]
         mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        rgb = torch.sigmoid(rgb)
+        sigma = self.mlp(mlp_in)
 
-        return rgb
+        if self.fea2denseAct == "softplus":
+            sigma = F.softplus(sigma + self.density_shift)
+        elif self.fea2denseAct == "relu":
+            sigma =  F.relu(sigma)
+
+        return sigma.view(-1)
 
 class MLPRender_PE(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):
@@ -163,7 +168,7 @@ class TensorBase(torch.nn.Module):
                     shadingMode = 'MLP_PE', alphaMask = None, near_far=[2.0,6.0],
                     density_shift = -10, alphaMask_thres=0.001, distance_scale=25, rayMarch_weight_thres=0.0001,
                     pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus'):
+                    fea2denseAct = 'softplus', densityRender = 'Sum'):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
@@ -178,6 +183,7 @@ class TensorBase(torch.nn.Module):
         self.distance_scale = distance_scale
         self.rayMarch_weight_thres = rayMarch_weight_thres
         self.fea2denseAct = fea2denseAct
+        self.densityRender = densityRender
 
         self.near_far = near_far
         self.step_ratio = step_ratio
@@ -194,6 +200,11 @@ class TensorBase(torch.nn.Module):
 
         self.shadingMode, self.pos_pe, self.view_pe, self.fea_pe, self.featureC = shadingMode, pos_pe, view_pe, fea_pe, featureC
         self.init_render_func(shadingMode, pos_pe, view_pe, fea_pe, featureC, device)
+        
+        # adding MLP for density
+        if densityRender == 'MLP':
+            self.densityRenderModule = MLPRender_Density(density_n_comp[0], fea_pe, fea2denseAct, density_shift).to(device)
+            print(self.densityRenderModule)
 
     def init_render_func(self, shadingMode, pos_pe, view_pe, fea_pe, featureC, device):
         if shadingMode == 'MLP_PE':
@@ -211,13 +222,8 @@ class TensorBase(torch.nn.Module):
             print("Unrecognized shading module")
             exit()
 
-        # add density MLP
-        self.densityRenderModule = MLPRender_Density(self.app_dim, fea_pe, featureC).to(device)
-
         print("pos_pe", pos_pe, "view_pe", view_pe, "fea_pe", fea_pe)
         print(self.renderModule)
-        # add density MLP
-        print(self.densityRenderModule)
 
     def update_stepSize(self, gridSize):
         print("aabb", self.aabb.view(-1))
@@ -239,6 +245,12 @@ class TensorBase(torch.nn.Module):
         pass
     
     def compute_densityfeature(self, xyz_sampled):
+        pass
+
+    def compute_densityfeature_sum(self, xyz_sampled):
+        pass
+
+    def compute_densityfeature_plain(self, xyz_sampled):
         pass
     
     def compute_appfeature(self, xyz_sampled):
@@ -365,12 +377,21 @@ class TensorBase(torch.nn.Module):
 
         xyz_min = valid_xyz.amin(0)
         xyz_max = valid_xyz.amax(0)
-
         new_aabb = torch.stack((xyz_min, xyz_max))
-
         total = torch.sum(alpha)
         print(f"bbox: {xyz_min, xyz_max} alpha rest %%%f"%(total/total_voxels*100))
         return new_aabb
+
+        # if valid_xyz.nelement() > 0:
+        #     xyz_min = valid_xyz.amin(0)
+        #     xyz_max = valid_xyz.amax(0)
+        #     new_aabb = torch.stack((xyz_min, xyz_max))
+        #     total = torch.sum(alpha)
+        #     print(f"bbox: {xyz_min, xyz_max} alpha rest %%%f"%(total/total_voxels*100))
+        #     return new_aabb
+        # else:
+        #     return self.aabb
+
 
     @torch.no_grad()
     def filtering_rays(self, all_rays, all_rgbs, N_samples=256, chunk=10240*5, bbox_only=False):
@@ -425,8 +446,16 @@ class TensorBase(torch.nn.Module):
 
         if alpha_mask.any():
             xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
-            sigma_feature = self.compute_densityfeature(xyz_sampled)
-            validsigma = self.feature2density(sigma_feature)
+            # sigma_feature = self.compute_densityfeature_sum(xyz_sampled)
+
+            if self.densityRender == 'Sum':
+                sigma_feature = self.compute_densityfeature_sum(xyz_sampled)
+                validsigma = self.feature2density(sigma_feature)
+            # with density MLP
+            elif self.densityRender == 'MLP':
+                sigma_feature = self.compute_densityfeature_plain(xyz_sampled)
+                validsigma = self.densityRenderModule(sigma_feature)
+
             sigma[alpha_mask] = validsigma
         
 
@@ -463,11 +492,17 @@ class TensorBase(torch.nn.Module):
 
         if ray_valid.any():
             xyz_sampled = self.normalize_coord(xyz_sampled)
-            sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
+            # sigma_feature = self.compute_densityfeature(xyz_sampled[ray_valid])
 
-            validsigma = self.feature2density(sigma_feature)
+            if self.densityRender == 'Sum':
+                sigma_feature = self.compute_densityfeature_sum(xyz_sampled[ray_valid])
+                validsigma = self.feature2density(sigma_feature)
+            # with density MLP
+            elif self.densityRender == 'MLP':
+                sigma_feature = self.compute_densityfeature_plain(xyz_sampled[ray_valid])
+                validsigma = self.densityRenderModule(sigma_feature)
+
             sigma[ray_valid] = validsigma
-
 
         alpha, weight, bg_weight = raw2alpha(sigma, dists * self.distance_scale)
 

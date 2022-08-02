@@ -202,7 +202,7 @@ class TensorVMSplit(TensorBase):
             total = total + reg(self.app_plane[idx]) * 1e-2 #+ reg(self.app_line[idx]) * 1e-3
         return total
 
-    def compute_densityfeature(self, xyz_sampled):
+    def compute_densityfeature_sum(self, xyz_sampled):
 
         # plane + line basis
         coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
@@ -218,6 +218,22 @@ class TensorVMSplit(TensorBase):
             sigma_feature = sigma_feature + torch.sum(plane_coef_point * line_coef_point, dim=0)
 
         return sigma_feature
+
+    def compute_densityfeature_plain(self, xyz_sampled):
+
+        # plane + line basis
+        coordinate_plane = torch.stack((xyz_sampled[..., self.matMode[0]], xyz_sampled[..., self.matMode[1]], xyz_sampled[..., self.matMode[2]])).detach().view(3, -1, 1, 2)
+        coordinate_line = torch.stack((xyz_sampled[..., self.vecMode[0]], xyz_sampled[..., self.vecMode[1]], xyz_sampled[..., self.vecMode[2]]))
+        coordinate_line = torch.stack((torch.zeros_like(coordinate_line), coordinate_line), dim=-1).detach().view(3, -1, 1, 2)
+
+        plane_coef_point,line_coef_point = [],[]
+        for idx_plane in range(len(self.density_plane)):
+            plane_coef_point = F.grid_sample(self.density_plane[idx_plane], coordinate_plane[[idx_plane]],
+                                                align_corners=True).view(-1, *xyz_sampled.shape[:1])
+            line_coef_point = F.grid_sample(self.density_line[idx_plane], coordinate_line[[idx_plane]],
+                                            align_corners=True).view(-1, *xyz_sampled.shape[:1])
+
+        return (plane_coef_point * line_coef_point).T
 
 
     def compute_appfeature(self, xyz_sampled):
@@ -312,7 +328,6 @@ class TensorVMSplit2(TensorBase):
         self.density_plane, self.density_line = self.init_one_svd(self.density_n_comp, self.gridSize, 0.1, device)
         self.app_plane, self.app_line = self.init_one_svd(self.app_n_comp, self.gridSize, 0.1, device)
         self.basis_mat = torch.nn.Linear(sum(self.app_n_comp), self.app_dim, bias=False).to(device)
-        self.basis_mat_density = torch.nn.Linear(sum(self.density_n_comp), self.app_dim, bias=False).to(device)
 
 
     def init_one_svd(self, n_component, gridSize, scale, device):
@@ -384,10 +399,9 @@ class TensorVMSplit2(TensorBase):
                                                 align_corners=True).view(-1, *xyz_sampled.shape[:1])
             line_coef_point = F.grid_sample(self.density_line[idx_plane], coordinate_line[[idx_plane]],
                                             align_corners=True).view(-1, *xyz_sampled.shape[:1])
-        plane_coef_point, line_coef_point = torch.cat(plane_coef_point), torch.cat(line_coef_point)
 
-
-        return self.basis_mat_density((plane_coef_point * line_coef_point).T)
+        # plane_coef_point, line_coef_point = torch.cat(plane_coef_point), torch.cat(line_coef_point)
+        return (plane_coef_point * line_coef_point).T
 
 
     def compute_appfeature(self, xyz_sampled):

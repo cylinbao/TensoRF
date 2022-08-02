@@ -19,11 +19,12 @@ render_test = 1
 
 n_lamb_sigma = [16,16,16]
 n_lamb_sh = [48,48,48]
-model_name = TensorVMSplit2
+model_name = TensorVMSplit
 
 
 shadingMode = MLP_Fea
 fea2denseAct = softplus
+densityRender = Sum
 
 view_pe = 2
 fea_pe = 2
