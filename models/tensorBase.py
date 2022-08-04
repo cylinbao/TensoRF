@@ -88,19 +88,23 @@ class MLPRender_Density(torch.nn.Module):
     def __init__(self, inChanel, feape=6, fea2denseAct="softplus", density_shift=None):
         super(MLPRender_Density, self).__init__()
 
-        self.in_mlpC = 2*feape*inChanel + inChanel
+        # self.in_mlpC = 2*feape*inChanel + inChanel
+        self.in_mlpC = inChanel
         self.feape = feape
         self.fea2denseAct = fea2denseAct
         self.density_shift = density_shift
-        layer1 = torch.nn.Linear(self.in_mlpC, 1)
+        featureC = 128
+        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
+        layer2 = torch.nn.Linear(featureC, 1)
 
-        self.mlp = torch.nn.Sequential(layer1)
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2)
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, features, denseAct="softplus"):
         indata = [features]
-        if self.feape > 0:
-            indata += [positional_encoding(features, self.feape)]
+        # not use the pos encoding on density feature
+        # if self.feape > 0: 
+        #     indata += [positional_encoding(features, self.feape)]
         mlp_in = torch.cat(indata, dim=-1)
         sigma = self.mlp(mlp_in)
 
@@ -168,12 +172,13 @@ class TensorBase(torch.nn.Module):
                     shadingMode = 'MLP_PE', alphaMask = None, near_far=[2.0,6.0],
                     density_shift = -10, alphaMask_thres=0.001, distance_scale=25, rayMarch_weight_thres=0.0001,
                     pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus', densityRender = 'Sum'):
+                    fea2denseAct = 'softplus', densityRender = 'Sum', density_dim=9):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
         self.app_n_comp = appearance_n_comp
         self.app_dim = app_dim
+        self.density_dim = density_dim
         self.aabb = aabb
         self.alphaMask = alphaMask
         self.device=device
@@ -203,7 +208,8 @@ class TensorBase(torch.nn.Module):
         
         # adding MLP for density
         if densityRender == 'MLP':
-            self.densityRenderModule = MLPRender_Density(density_n_comp[0], fea_pe, fea2denseAct, density_shift).to(device)
+            # self.densityRenderModule = MLPRender_Density(self.density_dim, fea_pe, fea2denseAct, density_shift).to(device)
+            self.densityRenderModule = MLPRender_Density(sum(density_n_comp), fea_pe, fea2denseAct, density_shift).to(device)
             print(self.densityRenderModule)
 
     def init_render_func(self, shadingMode, pos_pe, view_pe, fea_pe, featureC, device):
