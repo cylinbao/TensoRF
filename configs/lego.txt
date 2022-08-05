@@ -4,6 +4,8 @@ datadir = ./data/nerf_synthetic/lego
 expname =  tensorf_lego_VM_MLP
 basedir = ./log
 
+gpu = 0
+
 n_iters = 30000
 batch_size = 4096
 
@@ -20,7 +22,6 @@ render_test = 1
 n_lamb_sigma = [16,16,16]
 n_lamb_sh = [48,48,48]
 model_name = TensorVMSplit
-
 
 shadingMode = MLP_Fea
 # fea2denseAct = softplus

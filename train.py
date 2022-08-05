@@ -16,7 +16,7 @@ import sys
 
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
 renderer = OctreeRender_trilinear_fast
 
@@ -39,9 +39,9 @@ class SimpleSampler:
 @torch.no_grad()
 def export_mesh(args):
 
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=args.device)
     kwargs = ckpt['kwargs']
-    kwargs.update({'device': device})
+    kwargs.update({'device': args.device})
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
 
@@ -61,9 +61,9 @@ def render_test(args):
         print('the ckpt path does not exists!!')
         return
 
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=args.device)
     kwargs = ckpt['kwargs']
-    kwargs.update({'device': device})
+    kwargs.update({'device': args.device})
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
 
@@ -72,19 +72,19 @@ def render_test(args):
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
         PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
         print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
         evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
 
     if args.render_path:
         c2ws = test_dataset.render_path
         os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
 
 def reconstruction(args):
 
@@ -118,21 +118,19 @@ def reconstruction(args):
 
 
 
-    # init parameters
-    # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
-    aabb = train_dataset.scene_bbox.to(device)
+    aabb = train_dataset.scene_bbox.to(args.device)
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
 
 
     if args.ckpt is not None:
-        ckpt = torch.load(args.ckpt, map_location=device)
+        ckpt = torch.load(args.ckpt, map_location=args.device)
         kwargs = ckpt['kwargs']
-        kwargs.update({'device':device})
+        kwargs.update({'device': args.device})
         tensorf = eval(args.model_name)(**kwargs)
         tensorf.load(ckpt)
     else:
-        tensorf = eval(args.model_name)(aabb, reso_cur, device,
+        tensorf = eval(args.model_name)(aabb, reso_cur, args.device,
                     density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh, app_dim=args.data_dim_color, near_far=near_far,
                     shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct, densityRender=args.densityRender)
@@ -177,11 +175,11 @@ def reconstruction(args):
 
 
         ray_idx = trainingSampler.nextids()
-        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
+        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(args.device)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
-                                N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
+                                N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
 
@@ -280,13 +278,13 @@ def reconstruction(args):
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
         PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
         PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
         summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
@@ -296,7 +294,7 @@ def reconstruction(args):
         print('========>',c2ws.shape)
         os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=args.device)
 
 
 if __name__ == '__main__':
@@ -306,6 +304,7 @@ if __name__ == '__main__':
     np.random.seed(20211202)
 
     args = config_parser()
+    args.device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
     print(args)
 
     if  args.export_mesh:

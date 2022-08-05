@@ -4,6 +4,8 @@ def config_parser(cmd=None):
     parser = configargparse.ArgumentParser()
     parser.add_argument('--config', is_config_file=True,
                         help='config file path')
+    parser.add_argument("--gpu", type=int, default=0,
+                        help='gpu id to use')
     parser.add_argument("--expname", type=str,
                         help='experiment name')
     parser.add_argument("--basedir", type=str, default='./log',
