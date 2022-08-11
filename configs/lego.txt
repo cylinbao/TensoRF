@@ -1,15 +1,15 @@
 
 dataset_name = blender
 datadir = ./data/nerf_synthetic/lego
-expname =  tensorf_lego_VM_MLP
+expname =  tensorf_lego_VM
 basedir = ./log
 
-gpu = 0
+gpu = 1
 
 n_iters = 30000
 batch_size = 4096
 
-N_voxel_init = 2097156 # 128**3
+N_voxel_init = 2097152 # 128**3
 N_voxel_final = 27000000 # 300**3
 upsamp_list = [2000,3000,4000,5500,7000]
 update_AlphaMask_list = [2000,4000]
@@ -24,10 +24,10 @@ n_lamb_sh = [48,48,48]
 model_name = TensorVMSplit
 
 shadingMode = MLP_Fea
-# fea2denseAct = softplus
-fea2denseAct = relu
-densityRender = MLP
-# density_shift = -5
+fea2denseAct = softplus
+# fea2denseAct = relu
+densityRender = Sum
+# density_shift = -10
 
 view_pe = 2
 fea_pe = 2

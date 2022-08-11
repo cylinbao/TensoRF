@@ -172,13 +172,12 @@ class TensorBase(torch.nn.Module):
                     shadingMode = 'MLP_PE', alphaMask = None, near_far=[2.0,6.0],
                     density_shift = -10, alphaMask_thres=0.001, distance_scale=25, rayMarch_weight_thres=0.0001,
                     pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus', densityRender = 'Sum', density_dim=9):
+                    fea2denseAct = 'softplus', densityRender = 'Sum'):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
         self.app_n_comp = appearance_n_comp
         self.app_dim = app_dim
-        self.density_dim = density_dim
         self.aabb = aabb
         self.alphaMask = alphaMask
         self.device=device
@@ -208,7 +207,6 @@ class TensorBase(torch.nn.Module):
         
         # adding MLP for density
         if densityRender == 'MLP':
-            # self.densityRenderModule = MLPRender_Density(self.density_dim, fea_pe, fea2denseAct, density_shift).to(device)
             self.densityRenderModule = MLPRender_Density(sum(density_n_comp), fea_pe, fea2denseAct, density_shift).to(device)
             print(self.densityRenderModule)
 
