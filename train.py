@@ -6,7 +6,8 @@ from opt import config_parser
 
 
 import json, random
-from renderer import *
+from renderer import OctreeRender_trilinear_fast, evaluation, evaluation_profile, evaluation_path
+from models.tensoRF import TensorVM, TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
 from utils import *
 from torch.utils.tensorboard import SummaryWriter
 import datetime
@@ -67,7 +68,8 @@ def render_test(args):
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
 
-    logfolder = os.path.dirname(args.ckpt)
+    # logfolder = os.path.dirname(args.ckpt)
+    logfolder = f'{args.basedir}/{args.expname}'
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
@@ -85,6 +87,11 @@ def render_test(args):
         os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+
+    if args.render_profile:
+        # os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
+        evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=args.N_vis,
+                           N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device)
 
 def reconstruction(args):
 
@@ -117,13 +124,11 @@ def reconstruction(args):
     summary_writer = SummaryWriter(logfolder)
 
 
-
     # init parameters
     # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
     aabb = train_dataset.scene_bbox.to(device)
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
-    nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-
+    nSamples = min(args.nSamples, cal_n_samples(reso_cur, args.step_ratio))
 
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
@@ -136,7 +141,6 @@ def reconstruction(args):
                     density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh, app_dim=args.data_dim_color, near_far=near_far,
                     shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
-
 
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
     if args.lr_decay_iters > 0:
@@ -152,7 +156,6 @@ def reconstruction(args):
 
     #linear in logrithmic space
     N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
-
 
     torch.cuda.empty_cache()
     PSNRs,PSNRs_test = [],[0]
@@ -174,8 +177,6 @@ def reconstruction(args):
 
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
-
-
         ray_idx = trainingSampler.nextids()
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
 
@@ -184,7 +185,6 @@ def reconstruction(args):
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
-
 
         # loss
         total_loss = loss
@@ -272,9 +272,7 @@ def reconstruction(args):
             grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
         
-
     tensorf.save(f'{logfolder}/{args.expname}.th')
-
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
@@ -311,7 +309,7 @@ if __name__ == '__main__':
     if  args.export_mesh:
         export_mesh(args)
 
-    if args.render_only and (args.render_test or args.render_path):
+    if args.render_only and (args.render_test or args.render_path or args.render_profile):
         render_test(args)
     else:
         reconstruction(args)

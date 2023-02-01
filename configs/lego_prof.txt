@@ -1,0 +1,13 @@
+dataset_name = blender
+datadir = ./data/nerf_synthetic/lego
+expname =  tensorf_lego_VM_prof
+basedir = ./log
+ckpt = ./ckpts/tensorf_lego_VM.th
+
+batch_size = 16384
+N_vis = 20
+
+render_only = 1
+render_profile = 1
+
+model_name = TensorVMSplit

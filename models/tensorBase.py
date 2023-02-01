@@ -224,7 +224,7 @@ class TensorBase(torch.nn.Module):
     def get_kwargs(self):
         return {
             'aabb': self.aabb,
-            'gridSize':self.gridSize.tolist(),
+            'gridSize': self.gridSize.tolist(),
             'density_n_comp': self.density_n_comp,
             'appearance_n_comp': self.app_n_comp,
             'app_dim': self.app_dim,
