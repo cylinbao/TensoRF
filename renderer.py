@@ -1,9 +1,9 @@
 import torch,os,imageio,sys
 from tqdm.auto import tqdm
 from dataLoader.ray_utils import get_rays
-# from models.tensoRF import TensorVM, TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
 from utils import *
 from dataLoader.ray_utils import ndc_rays_blender
+from models.superresolution import SuperResolution
 
 
 def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
@@ -29,9 +29,17 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
     except Exception:
         pass
 
+    # sr_module = SuperResolution()
+
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     prof_time = []
+
+    print("Runing warm up iterations...")
+    rays = test_dataset.all_rays[0]
+    for _ in range(5):
+        renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+                 ndc_ray=ndc_ray, white_bg = white_bg, device=device)
 
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
     for idx, samples in tqdm(enumerate(test_dataset.all_rays[0::img_eval_interval]), file=sys.stdout):
@@ -42,6 +50,7 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
         start.record()
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        # sr_module()
         end.record()
         torch.cuda.synchronize()
         prof_time.append(start.elapsed_time(end))
