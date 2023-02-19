@@ -1,13 +1,12 @@
-
 import os
 from tqdm.auto import tqdm
 from opt import config_parser
 
 
-
 import json, random
-from renderer import OctreeRender_trilinear_fast, evaluation, evaluation_profile, evaluation_path
+from renderer import OctreeRender_trilinear_fast, OctreeRender_trilinear_fast_with_SR, evaluation, evaluation_profile, evaluation_path
 from models.tensoRF import TensorVM, TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
+import torch.nn.functional as F
 from utils import *
 from torch.utils.tensorboard import SummaryWriter
 import datetime
@@ -16,10 +15,10 @@ from dataLoader import dataset_dict
 import sys
 
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-renderer = OctreeRender_trilinear_fast
+# renderer = OctreeRender_trilinear_fast
+renderer = OctreeRender_trilinear_fast_with_SR
 
 
 class SimpleSampler:
@@ -35,6 +34,25 @@ class SimpleSampler:
             self.ids = torch.LongTensor(np.random.permutation(self.total))
             self.curr = 0
         return self.ids[self.curr:self.curr+self.batch]
+
+
+class ImageSampler:
+    def __init__(self, total, img_wh):
+        self.total = total
+        self.img_wh = img_wh
+        # self.batch = batch
+        self.batch = img_wh[0] * img_wh[1]
+        self.curr = 0
+        # self.ids = None
+        self.ids = torch.LongTensor(np.arange(self.total*self.batch))
+
+    def nextids(self):
+        base = self.curr*self.batch
+        ids = self.ids[base:base+self.batch]
+        self.curr += 1
+        if self.curr >= self.total:
+            self.curr = 0
+        return ids
 
 
 @torch.no_grad()
@@ -155,15 +173,16 @@ def reconstruction(args):
 
 
     #linear in logrithmic space
-    N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
+    # N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
 
     torch.cuda.empty_cache()
     PSNRs,PSNRs_test = [],[0]
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
-    if not args.ndc_ray:
-        allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
-    trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
+    # if not args.ndc_ray:
+    #     allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
+    # trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
+    trainingSampler = ImageSampler(train_dataset.poses.shape[0], train_dataset.img_wh)
 
     Ortho_reg_weight = args.Ortho_weight
     print("initial Ortho_reg_weight", Ortho_reg_weight)
@@ -174,11 +193,12 @@ def reconstruction(args):
     tvreg = TVLoss()
     print(f"initial TV_weight density: {TV_weight_density} appearance: {TV_weight_app}")
 
-
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
         ray_idx = trainingSampler.nextids()
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
+        rays_train = rays_train.permute(1,0).reshape(1,6,512,512)
+        rays_train = F.interpolate(rays_train, scale_factor=0.125).view(6,4096).permute(1,0)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
         rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
@@ -240,37 +260,39 @@ def reconstruction(args):
 
 
 
-        if iteration in update_AlphaMask_list:
+        # if iteration in update_AlphaMask_list:
 
-            if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
-                reso_mask = reso_cur
-            new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
-            if iteration == update_AlphaMask_list[0]:
-                tensorf.shrink(new_aabb)
-                # tensorVM.alphaMask = None
-                L1_reg_weight = args.L1_weight_rest
-                print("continuing L1_reg_weight", L1_reg_weight)
-
-
-            if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
-                # filter rays outside the bbox
-                allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
-                trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
+        #     if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
+        #         reso_mask = reso_cur
+        #     new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
+        #     if iteration == update_AlphaMask_list[0]:
+        #         tensorf.shrink(new_aabb)
+        #         # tensorVM.alphaMask = None
+        #         L1_reg_weight = args.L1_weight_rest
+        #         print("continuing L1_reg_weight", L1_reg_weight)
+        #     breakpoint()
 
 
-        if iteration in upsamp_list:
-            n_voxels = N_voxel_list.pop(0)
-            reso_cur = N_to_reso(n_voxels, tensorf.aabb)
-            nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-            tensorf.upsample_volume_grid(reso_cur)
+            # if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
+            #     # filter rays outside the bbox
+            #     allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
+            #     trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
 
-            if args.lr_upsample_reset:
-                print("reset lr to initial")
-                lr_scale = 1 #0.1 ** (iteration / args.n_iters)
-            else:
-                lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
-            optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
+
+        # if iteration in upsamp_list:
+        #     n_voxels = N_voxel_list.pop(0)
+        #     reso_cur = N_to_reso(n_voxels, tensorf.aabb)
+        #     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
+        #     tensorf.upsample_volume_grid(reso_cur)
+        #     breakpoint()
+
+        #     if args.lr_upsample_reset:
+        #         print("reset lr to initial")
+        #         lr_scale = 1 #0.1 ** (iteration / args.n_iters)
+        #     else:
+        #         lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
+        #     grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
+        #     optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
         
     tensorf.save(f'{logfolder}/{args.expname}.th')
 

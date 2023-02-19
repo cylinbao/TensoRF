@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from .sh import eval_sh_bases
 import numpy as np
 import time
+from eg3d.superresolution import SuperresolutionHybrid8XDC
 
 
 def positional_encoding(positions, freqs):
@@ -68,8 +69,9 @@ class MLPRender_Fea(torch.nn.Module):
         layer2 = torch.nn.Linear(featureC, featureC)
         layer3 = torch.nn.Linear(featureC,3)
 
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
+        # self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
+        # torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, pts, viewdirs, features):
         indata = [features, viewdirs]
@@ -165,6 +167,10 @@ class TensorBase(torch.nn.Module):
         self.matMode = [[0,1], [0,2], [1,2]]
         self.vecMode =  [2, 1, 0]
         self.comp_w = [1,1,1]
+
+        sr_args = {'channels': 32, 'img_resolution': 512, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+                   'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
+        self.sr_module = SuperresolutionHybrid8XDC(**sr_args).to(device)
 
 
         self.init_svd_volume(gridSize[0], device)
@@ -430,7 +436,8 @@ class TensorBase(torch.nn.Module):
 
 
         sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
+        # rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 32), device=xyz_sampled.device)
 
         if ray_valid.any():
             xyz_sampled = self.normalize_coord(xyz_sampled)

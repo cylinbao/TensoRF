@@ -3,7 +3,8 @@ from tqdm.auto import tqdm
 from dataLoader.ray_utils import get_rays
 from utils import *
 from dataLoader.ray_utils import ndc_rays_blender
-from models.superresolution import SuperResolution
+from models.tensorBase import positional_encoding
+import torch.nn.functional as F
 
 
 def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
@@ -19,6 +20,30 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray
         depth_maps.append(depth_map)
     
     return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
+
+
+def OctreeRender_trilinear_fast_with_SR(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
+
+    feats, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
+    N_rays_all = rays.shape[0]
+    for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
+        rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
+    
+        feat_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+
+        feats.append(feat_map)
+        depth_maps.append(depth_map)
+
+    feat_map = torch.cat(feats)
+    # depth_maps = torch.cat(depth_maps)
+
+    ws = positional_encoding(rays_chunk[0,:3], 8).view(1,1,48)
+    feat_map = feat_map.permute(1, 0).view(1, -1, 64, 64)
+    rgb_map = feat_map[:, :3]
+    sr_image = tensorf.sr_module(rgb_map, feat_map, ws)
+    sr_image = sr_image.view(1,3,-1).reshape(-1,3)
+    
+    return sr_image, None, torch.cat(depth_maps), None, None
 
 
 @torch.no_grad()
@@ -81,12 +106,15 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
 
         W, H = test_dataset.img_wh
         rays = samples.view(-1,samples.shape[-1])
+        rays = rays.permute(1,0).reshape(1,6,512,512)
+        rays = F.interpolate(rays, scale_factor=0.125).view(6,4096).permute(1,0)
 
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device)
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
-        rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
+        # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
+        rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(int(H/8), int(W/8)).cpu()
 
         depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
         if len(test_dataset.all_rgbs):
@@ -108,7 +136,8 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
         depth_maps.append(depth_map)
         if savePath is not None:
             imageio.imwrite(f'{savePath}/{prtx}{idx:03d}.png', rgb_map)
-            rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
+            # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
+            rgb_map = np.concatenate((rgb_map), axis=1)
             imageio.imwrite(f'{savePath}/rgbd/{prtx}{idx:03d}.png', rgb_map)
 
     imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)

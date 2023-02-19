@@ -271,9 +271,13 @@ class SuperresolutionHybrid8XDC(torch.nn.Module):
         use_fp16 = sr_num_fp16_res > 0
         self.input_resolution = 128
         self.sr_antialias = sr_antialias
-        self.block0 = SynthesisBlock(channels, 256, w_dim=512, resolution=256,
+        # self.block0 = SynthesisBlock(channels, 256, w_dim=512, resolution=256,
+        #         img_channels=3, is_last=False, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
+        # self.block1 = SynthesisBlock(256, 128, w_dim=512, resolution=512,
+        #         img_channels=3, is_last=True, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
+        self.block0 = SynthesisBlock(channels, 256, w_dim=48, resolution=256,
                 img_channels=3, is_last=False, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
-        self.block1 = SynthesisBlock(256, 128, w_dim=512, resolution=512,
+        self.block1 = SynthesisBlock(256, 128, w_dim=48, resolution=512,
                 img_channels=3, is_last=True, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
 
     def forward(self, rgb, x, ws, **block_kwargs):
