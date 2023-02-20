@@ -18,6 +18,8 @@ def config_parser(cmd=None):
     parser.add_argument('--with_depth', action='store_true')
     parser.add_argument('--downsample_train', type=float, default=1.0)
     parser.add_argument('--downsample_test', type=float, default=1.0)
+    parser.add_argument('--sr_ratio', type=int, default=1,
+                        help="super resolution ratio")
 
     parser.add_argument('--model_name', type=str, default='TensorVMSplit',
                         choices=['TensorVMSplit', 'TensorCP'])

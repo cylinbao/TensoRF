@@ -70,8 +70,8 @@ class MLPRender_Fea(torch.nn.Module):
         layer3 = torch.nn.Linear(featureC,3)
 
         # self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
         # torch.nn.init.constant_(self.mlp[-1].bias, 0)
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
 
     def forward(self, pts, viewdirs, features):
         indata = [features, viewdirs]
@@ -134,7 +134,6 @@ class MLPRender(torch.nn.Module):
         rgb = torch.sigmoid(rgb)
 
         return rgb
-
 
 
 class TensorBase(torch.nn.Module):

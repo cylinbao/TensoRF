@@ -7,7 +7,7 @@ from models.tensorBase import positional_encoding
 import torch.nn.functional as F
 
 
-def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
+def OctreeRender_trilinear_fast(rays, tensorf, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
 
     rgbs, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
     N_rays_all = rays.shape[0]
@@ -22,9 +22,10 @@ def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray
     return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
 
 
-def OctreeRender_trilinear_fast_with_SR(rays, tensorf, chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
+def OctreeRender_trilinear_fast_with_SR(rays, tensorf, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
 
     feats, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
+    W, H = img_wh
     N_rays_all = rays.shape[0]
     for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
         rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
@@ -37,11 +38,12 @@ def OctreeRender_trilinear_fast_with_SR(rays, tensorf, chunk=4096, N_samples=-1,
     feat_map = torch.cat(feats)
     # depth_maps = torch.cat(depth_maps)
 
-    ws = positional_encoding(rays_chunk[0,:3], 8).view(1,1,48)
-    feat_map = feat_map.permute(1, 0).view(1, -1, 64, 64)
+    ws = positional_encoding(rays[0,:3], 12).view(1,1,-1).to(device)
+    breakpoint()
+    feat_map = feat_map.permute(1, 0).view(1, -1, W, H)
     rgb_map = feat_map[:, :3]
     sr_image = tensorf.sr_module(rgb_map, feat_map, ws)
-    sr_image = sr_image.view(1,3,-1).reshape(-1,3)
+    sr_image = sr_image.permute(0,2,3,1).view(-1,3)
     
     return sr_image, None, torch.cat(depth_maps), None, None
 
@@ -99,22 +101,23 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
     except Exception:
         pass
 
+    W, H = test_dataset.img_wh
+    _W, _H = int(W/args.sr_ratio), int(H/args.sr_ratio)
     near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
     idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
     for idx, samples in tqdm(enumerate(test_dataset.all_rays[0::img_eval_interval]), file=sys.stdout):
-
-        W, H = test_dataset.img_wh
-        rays = samples.view(-1,samples.shape[-1])
-        rays = rays.permute(1,0).reshape(1,6,512,512)
-        rays = F.interpolate(rays, scale_factor=0.125).view(6,4096).permute(1,0)
+        # rays = samples.view(-1,samples.shape[-1])
+        # rays = samples.reshape(H*W, -1)
+        rays = samples.reshape(1,-1,H,W)
+        rays = F.interpolate(rays, scale_factor=args.downsample_sr).reshape(_H*_W, 6)
 
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
-                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+                                               ndc_ray=ndc_ray, white_bg = white_bg, device=device)
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
-        # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
-        rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(int(H/8), int(W/8)).cpu()
+        rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
+        # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(int(H/8), int(W/8)).cpu()
 
         depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
         if len(test_dataset.all_rgbs):

@@ -37,22 +37,19 @@ class SimpleSampler:
 
 
 class ImageSampler:
-    def __init__(self, total, img_wh):
+    def __init__(self, total, batch=1):
         self.total = total
-        self.img_wh = img_wh
-        # self.batch = batch
-        self.batch = img_wh[0] * img_wh[1]
+        self.batch = batch
         self.curr = 0
-        # self.ids = None
-        self.ids = torch.LongTensor(np.arange(self.total*self.batch))
+        self.ids = torch.LongTensor(torch.randperm(self.total))
 
     def nextids(self):
-        base = self.curr*self.batch
-        ids = self.ids[base:base+self.batch]
-        self.curr += 1
-        if self.curr >= self.total:
+        img_ids = self.ids[self.curr:self.curr+self.batch]
+        self.curr += self.batch
+        if self.curr == self.total:
             self.curr = 0
-        return ids
+            self.ids = torch.LongTensor(torch.randperm(self.total))
+        return img_ids
 
 
 @torch.no_grad()
@@ -115,7 +112,8 @@ def reconstruction(args):
 
     # init dataset
     dataset = dataset_dict[args.dataset_name]
-    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
+    # train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
+    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
     test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
@@ -179,10 +177,12 @@ def reconstruction(args):
     PSNRs,PSNRs_test = [],[0]
 
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
+    W, H = train_dataset.img_wh
+    _W, _H = int(W/args.sr_ratio), int(H/args.sr_ratio)
     # if not args.ndc_ray:
     #     allrays, allrgbs = tensorf.filtering_rays(allrays, allrgbs, bbox_only=True)
     # trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
-    trainingSampler = ImageSampler(train_dataset.poses.shape[0], train_dataset.img_wh)
+    trainingSampler = ImageSampler(train_dataset.poses.shape[0], batch=1)
 
     Ortho_reg_weight = args.Ortho_weight
     print("initial Ortho_reg_weight", Ortho_reg_weight)
@@ -196,12 +196,14 @@ def reconstruction(args):
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
         ray_idx = trainingSampler.nextids()
-        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
-        rays_train = rays_train.permute(1,0).reshape(1,6,512,512)
-        rays_train = F.interpolate(rays_train, scale_factor=0.125).view(6,4096).permute(1,0)
+        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device).reshape(H*W, 3)
+        # rays_train = rays_train.reshape(H*W, 6)
+        rays_train = rays_train.permute(0,3,1,2)
+        rays_train = F.interpolate(rays_train, scale_factor=float(1/args.sr_ratio))
+        rays_train = rays_train.reshape(6, _H*_W).permute(1,0)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, chunk=args.batch_size,
+        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -237,7 +239,6 @@ def reconstruction(args):
         PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))
         summary_writer.add_scalar('train/PSNR', PSNRs[-1], global_step=iteration)
         summary_writer.add_scalar('train/mse', loss, global_step=iteration)
-
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * lr_factor
