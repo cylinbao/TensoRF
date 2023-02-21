@@ -113,7 +113,7 @@ def reconstruction(args):
     # init dataset
     dataset = dataset_dict[args.dataset_name]
     # train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
-    train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
+    # train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
     test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
@@ -159,6 +159,7 @@ def reconstruction(args):
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
 
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
+    grad_vars += [{'params':tensorf.sr_module.parameters(), 'lr':0.01}]
     if args.lr_decay_iters > 0:
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
@@ -168,7 +169,6 @@ def reconstruction(args):
     print("lr decay", args.lr_decay_target_ratio, args.lr_decay_iters)
     
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
-
 
     #linear in logrithmic space
     # N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
@@ -255,10 +255,9 @@ def reconstruction(args):
 
 
         if iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0:
-            PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
+            PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
                                     prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-
 
 
         # if iteration in update_AlphaMask_list:

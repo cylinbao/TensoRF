@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from .sh import eval_sh_bases
 import numpy as np
 import time
-from eg3d.superresolution import SuperresolutionHybrid8XDC
+from eg3d.superresolution import SuperresolutionHybrid8XDC, SuperresolutionHybrid2X
 
 
 def positional_encoding(positions, freqs):
@@ -167,10 +167,10 @@ class TensorBase(torch.nn.Module):
         self.vecMode =  [2, 1, 0]
         self.comp_w = [1,1,1]
 
-        sr_args = {'channels': 32, 'img_resolution': 512, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+        sr_args = {'channels': 32, 'img_resolution': 128, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
                    'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
-        self.sr_module = SuperresolutionHybrid8XDC(**sr_args).to(device)
-
+        # self.sr_module = SuperresolutionHybrid8XDC(**sr_args).to(device)
+        self.sr_module = SuperresolutionHybrid2X(**sr_args).to(device)
 
         self.init_svd_volume(gridSize[0], device)
 

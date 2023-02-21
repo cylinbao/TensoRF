@@ -101,9 +101,13 @@ class SuperresolutionHybrid2X(torch.nn.Module):
         use_fp16 = sr_num_fp16_res > 0
         self.input_resolution = 64
         self.sr_antialias = sr_antialias
-        self.block0 = SynthesisBlockNoUp(channels, 128, w_dim=512, resolution=64,
+        # self.block0 = SynthesisBlockNoUp(channels, 128, w_dim=512, resolution=64,
+        #         img_channels=3, is_last=False, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
+        # self.block1 = SynthesisBlock(128, 64, w_dim=512, resolution=128,
+        #         img_channels=3, is_last=True, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
+        self.block0 = SynthesisBlockNoUp(channels, 128, w_dim=72, resolution=64,
                 img_channels=3, is_last=False, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
-        self.block1 = SynthesisBlock(128, 64, w_dim=512, resolution=128,
+        self.block1 = SynthesisBlock(128, 64, w_dim=72, resolution=128,
                 img_channels=3, is_last=True, use_fp16=use_fp16, conv_clamp=(256 if use_fp16 else None), **block_kwargs)
         self.register_buffer('resample_filter', upfirdn2d.setup_filter([1,3,3,1]))
 
