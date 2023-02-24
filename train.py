@@ -5,7 +5,7 @@ from opt import config_parser
 
 import json, random
 from renderer import OctreeRender_trilinear_fast, OctreeRender_trilinear_fast_with_SR, evaluation, evaluation_profile, evaluation_path
-from models.tensoRF import TensorVM, TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
+from models.tensoRF import TensorVM, TensorCP, TensorVMSplit
 import torch.nn.functional as F
 from utils import *
 from torch.utils.tensorboard import SummaryWriter
@@ -197,9 +197,8 @@ def reconstruction(args):
     for iteration in pbar:
         ray_idx = trainingSampler.nextids()
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device).reshape(H*W, 3)
-        # rays_train = rays_train.reshape(H*W, 6)
         rays_train = rays_train.permute(0,3,1,2)
-        rays_train = F.interpolate(rays_train, scale_factor=float(1/args.sr_ratio))
+        rays_train = F.interpolate(rays_train, scale_factor=float(1/args.sr_ratio), mode='bilinear')
         rays_train = rays_train.reshape(6, _H*_W).permute(1,0)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty

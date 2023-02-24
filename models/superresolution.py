@@ -1,20 +1,44 @@
 import torch
-from eg3d.superresolution import SuperresolutionHybrid2X, SuperresolutionHybrid8X
+from torch import nn
+from eg3d.superresolution import SuperresolutionHybrid2X, SuperresolutionHybrid8XDC
+from models.render_modules import positional_encoding
 
 class SuperResolution(torch.nn.Module):
     def __init__(self):
         super(SuperResolution, self).__init__()
-        self.sr2x = SuperresolutionHybrid2X(channels=32, img_resolution=128, sr_num_fp16_res=1, sr_antialias=True).cuda()
-        self.sr8x = SuperresolutionHybrid8X(channels=32, img_resolution=512, sr_num_fp16_res=1, sr_antialias=True).cuda()
 
-    def forward(self):
-      rgb = torch.randn([1,3,64,64]).cuda()
-      feat2x = torch.randn([1,32,64,64]).cuda()
-      ws2x = torch.randn([1,14,512]).cuda()
-      out = self.sr2x(rgb, feat2x, ws2x)
+        self.conv = nn.Conv2d(3, 32, kernel_size=1, stride=1)
+        self.mapping = nn.Sequential(self.conv, torch.nn.ReLU(), nn.BatchNorm2d(32))
 
-      feat8x = torch.randn([1,32,128,128]).cuda()
-      ws8x = torch.randn([1,14,512]).cuda()
-      out = self.sr8x(out, feat8x, ws8x)
+        # sr_args = {'channels': 32, 'img_resolution': 128, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+        #            'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
+        # self.sr = SuperresolutionHybrid2X(**sr_args).cuda()
 
-      return
+        sr_args = {'channels': 32, 'img_resolution': 512, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+                   'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
+        self.sr = SuperresolutionHybrid8XDC(**sr_args).cuda()
+
+        self.init_weight()
+    
+    def init_weight(self):
+        nn.init.kaiming_uniform_(self.conv.weight.data, nonlinearity='relu')
+        nn.init.constant_(self.conv.bias.data, 0)
+
+    def forward(self, rays, rgbs):
+        ws = positional_encoding(rays[0,:3,0,0], 12).view(1,1,-1)
+        feat_map = self.mapping(rgbs)
+        rgb_map = feat_map[:, :3]
+        sr_image = self.sr(rgb_map, feat_map, ws)
+
+        return sr_image
+
+
+class Interpolation(torch.nn.Module):
+    def __init__(self, sr_ratio=1):
+        super(Interpolation, self).__init__()
+        self.scale_ratio = sr_ratio
+
+    def forward(self, rgb, x, ws, **block_kwargs):
+        sr_rgb = nn.functional.interpolate(rgb, scale_factor=self.scale_ratio, mode='bilinear', align_corners=False, antialias=True)
+
+        return sr_rgb 

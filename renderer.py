@@ -3,7 +3,7 @@ from tqdm.auto import tqdm
 from dataLoader.ray_utils import get_rays
 from utils import *
 from dataLoader.ray_utils import ndc_rays_blender
-from models.tensorBase import positional_encoding
+from models.render_modules import positional_encoding
 import torch.nn.functional as F
 
 
@@ -55,8 +55,6 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
     except Exception:
         pass
 
-    # sr_module = SuperResolution()
-
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
     prof_time = []
@@ -76,7 +74,6 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
         start.record()
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                         ndc_ray=ndc_ray, white_bg = white_bg, device=device)
-        # sr_module()
         end.record()
         torch.cuda.synchronize()
         prof_time.append(start.elapsed_time(end))
@@ -105,11 +102,11 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
     near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
     idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
-    for idx, samples in tqdm(enumerate(test_dataset.all_rays[0::img_eval_interval]), file=sys.stdout):
-        # rays = samples.view(-1,samples.shape[-1])
-        # rays = samples.reshape(H*W, -1)
-        rays = samples.reshape(1,-1,H,W)
-        rays = F.interpolate(rays, scale_factor=float(1/args.sr_ratio)).reshape(_H*_W, 6)
+    for idx in tqdm(idxs, file=sys.stdout):
+        rays = test_dataset.all_rays[[idx]]
+        rays = rays.to(device).permute(0,3,1,2)
+        rays = F.interpolate(rays, scale_factor=float(1/args.sr_ratio), mode='bilinear')
+        rays = rays.reshape(6, _H*_W).permute(1,0)
 
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
@@ -120,7 +117,7 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
 
         # depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
         if len(test_dataset.all_rgbs):
-            gt_rgb = test_dataset.all_rgbs[idxs[idx]].view(H, W, 3)
+            gt_rgb = test_dataset.all_rgbs[[idx]].view(H, W, 3).cpu()
             loss = torch.mean((rgb_map - gt_rgb) ** 2)
             PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
 
@@ -132,7 +129,7 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
                 l_alex.append(l_a)
                 l_vgg.append(l_v)
 
-        rgb_map = (rgb_map.numpy() * 255).astype('uint8')
+        rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
         # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
         rgb_maps.append(rgb_map)
         # depth_maps.append(depth_map)
