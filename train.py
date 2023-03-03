@@ -196,19 +196,31 @@ def reconstruction(args):
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
         ray_idx = trainingSampler.nextids()
-        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device).reshape(H*W, 3)
+        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
+        # rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
+        # rays_train = rays_train.reshape(H*W, 6)
         rays_train = rays_train.permute(0,3,1,2)
         rays_train = F.interpolate(rays_train, scale_factor=float(1/args.sr_ratio), mode='bilinear')
         rays_train = rays_train.reshape(6, _H*_W).permute(1,0)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
+        # rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
+        #                         N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
+        rgb_map, sr_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
-        loss = torch.mean((rgb_map - rgb_train) ** 2)
+        ds_rgb_train = rgb_train.permute(0,3,1,2)
+        ds_rgb_train = F.interpolate(ds_rgb_train, scale_factor=float(1/args.sr_ratio), mode='bilinear')
+        ds_rgb_train = ds_rgb_train.reshape(3, _H*_W).permute(1,0)
+
+        # loss = torch.mean((rgb_map - rgb_train) ** 2)
+        # loss = torch.mean((sr_map - rgb_train.reshape(H*W, 3)) ** 2)
+        nerf_loss = torch.mean((rgb_map - ds_rgb_train) ** 2)
+        sr_loss = torch.mean((sr_map - rgb_train.reshape(H*W,3)) ** 2)
 
         # loss
-        total_loss = loss
+        # total_loss = loss
+        total_loss = 0.5*nerf_loss + 0.5*sr_loss
         if Ortho_reg_weight > 0:
             loss_reg = tensorf.vector_comp_diffs()
             total_loss += Ortho_reg_weight*loss_reg
@@ -233,6 +245,7 @@ def reconstruction(args):
         total_loss.backward()
         optimizer.step()
 
+        loss = total_loss
         loss = loss.detach().item()
         
         PSNRs.append(-10.0 * np.log(loss) / np.log(10.0))

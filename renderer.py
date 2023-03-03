@@ -14,7 +14,8 @@ def OctreeRender_trilinear_fast(rays, tensorf, img_wh=(64,64), chunk=4096, N_sam
     for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
         rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
     
-        rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+        # rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+        rgb_map, depth_map, feat_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
 
         rgbs.append(rgb_map)
         depth_maps.append(depth_map)
@@ -24,27 +25,31 @@ def OctreeRender_trilinear_fast(rays, tensorf, img_wh=(64,64), chunk=4096, N_sam
 
 def OctreeRender_trilinear_fast_with_SR(rays, tensorf, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
 
-    feats, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
+    # feats, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
+    rgbs, alphas, depth_maps, feat_maps, weights, uncertainties = [], [], [], [], [], []
     W, H = img_wh
     N_rays_all = rays.shape[0]
     for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
         rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
     
-        feat_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+        rgb_map, depth_map, feat_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
 
-        feats.append(feat_map)
+        rgbs.append(rgb_map)
         depth_maps.append(depth_map)
+        feat_maps.append(feat_map)
 
-    feat_map = torch.cat(feats)
+    rgbs = torch.cat(rgbs)
+    feat_maps = torch.cat(feat_maps)
     # depth_maps = torch.cat(depth_maps)
 
     ws = positional_encoding(rays[0,:3], 12).view(1,1,-1).to(device)
-    feat_map = feat_map.permute(1, 0).view(1, -1, W, H)
-    rgb_map = feat_map[:, :3]
-    sr_image = tensorf.sr_module(rgb_map, feat_map, ws)
+    _rgbs = rgbs.permute(1, 0).view(1, -1, W, H)
+    feat_maps = feat_maps.permute(1, 0).view(1, -1, W, H)
+    # rgb_map = feat_map[:, :3]
+    sr_image = tensorf.sr_module(_rgbs, feat_maps, ws)
     sr_image = sr_image.permute(0,2,3,1).view(-1,3)
     
-    return sr_image, None, torch.cat(depth_maps), None, None
+    return rgbs, sr_image, None, torch.cat(depth_maps), None, None
 
 
 @torch.no_grad()
@@ -104,12 +109,16 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
     idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
     for idx in tqdm(idxs, file=sys.stdout):
         rays = test_dataset.all_rays[[idx]]
+        # rays = rays.reshape(H*W, -1)
         rays = rays.to(device).permute(0,3,1,2)
         rays = F.interpolate(rays, scale_factor=float(1/args.sr_ratio), mode='bilinear')
         rays = rays.reshape(6, _H*_W).permute(1,0)
 
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        # rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        #                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        rgb_map, sr_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        rgb_map = sr_map
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
         # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()

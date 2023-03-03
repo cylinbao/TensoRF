@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from .sh import eval_sh_bases
 import numpy as np
 import time
-from models.render_modules import MLPRender_PE, MLPRender_Fea, MLPRender, SHRender, RGBRender
+from models.render_modules import MLPRender_PE, MLPRender_Fea, MLPRender_Fea2, MLPRender, SHRender, RGBRender
 from models.render_modules import positional_encoding, raw2alpha
 from eg3d.superresolution import SuperresolutionHybrid8XDC, SuperresolutionHybrid2X
 from models.superresolution import Interpolation
@@ -33,22 +33,24 @@ class TensorBase(torch.nn.Module):
         self.near_far = near_far
         self.step_ratio = step_ratio
 
-
         self.update_stepSize(gridSize)
 
         self.matMode = [[0,1], [0,2], [1,2]]
         self.vecMode =  [2, 1, 0]
         self.comp_w = [1,1,1]
 
+        self.feature2rgb = torch.nn.Sequential(
+            torch.nn.Linear(32, 3),
+            torch.nn.Sigmoid()
+        ).to(device)
+
         # self.sr_module = Interpolation(sr_ratio=8).to(device)
-
-        # sr_args = {'channels': 32, 'img_resolution': 128, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
-        #            'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
-        # self.sr_module = SuperresolutionHybrid2X(**sr_args).to(device)
-
-        sr_args = {'channels': 32, 'img_resolution': 512, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+        sr_args = {'channels': 32, 'img_resolution': 128, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
                    'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
-        self.sr_module = SuperresolutionHybrid8XDC(**sr_args).to(device)
+        self.sr_module = SuperresolutionHybrid2X(**sr_args).to(device)
+        # sr_args = {'channels': 32, 'img_resolution': 512, 'sr_num_fp16_res': 4, 'sr_antialias': True, 
+        #            'channel_base': 32768, 'channel_max': 48, 'fused_modconv_default': 'inference_only'}
+        # self.sr_module = SuperresolutionHybrid8XDC(**sr_args).to(device)
 
         self.init_svd_volume(gridSize[0], device)
 
@@ -60,6 +62,8 @@ class TensorBase(torch.nn.Module):
             self.renderModule = MLPRender_PE(self.app_dim, view_pe, pos_pe, featureC).to(device)
         elif shadingMode == 'MLP_Fea':
             self.renderModule = MLPRender_Fea(self.app_dim, view_pe, fea_pe, featureC).to(device)
+        elif shadingMode == 'MLP_Fea2':
+            self.renderModule = MLPRender_Fea2(self.app_dim, featureC).to(device)
         elif shadingMode == 'MLP':
             self.renderModule = MLPRender(self.app_dim, view_pe, featureC).to(device)
         elif shadingMode == 'SH':
@@ -313,8 +317,8 @@ class TensorBase(torch.nn.Module):
 
 
         sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        # rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
-        rgb = torch.zeros((*xyz_sampled.shape[:2], 32), device=xyz_sampled.device)
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
+        rgb_feat = torch.zeros((*xyz_sampled.shape[:2], 32), device=xyz_sampled.device)
 
         if ray_valid.any():
             xyz_sampled = self.normalize_coord(xyz_sampled)
@@ -330,15 +334,17 @@ class TensorBase(torch.nn.Module):
 
         if app_mask.any():
             app_features = self.compute_appfeature(xyz_sampled[app_mask])
-            valid_rgbs = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
+            valid_rgbs_feat = self.renderModule(xyz_sampled[app_mask], viewdirs[app_mask], app_features)
+            valid_rgbs = self.feature2rgb(valid_rgbs_feat)
             rgb[app_mask] = valid_rgbs
+            rgb_feat[app_mask] = valid_rgbs_feat
 
         acc_map = torch.sum(weight, -1)
         rgb_map = torch.sum(weight[..., None] * rgb, -2)
+        rgb_feat_map = torch.sum(weight[..., None] * rgb_feat, -2)
 
         if white_bg or (is_train and torch.rand((1,))<0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
-
         
         rgb_map = rgb_map.clamp(0,1)
 
@@ -346,5 +352,7 @@ class TensorBase(torch.nn.Module):
             depth_map = torch.sum(weight * z_vals, -1)
             depth_map = depth_map + (1. - acc_map) * rays_chunk[..., -1]
 
-        return rgb_map, depth_map # rgb, sigma, alpha, weight, bg_weight
+        # rgb = rgb_map[:,:3]
 
+        return rgb_map, depth_map, rgb_feat_map # rgb, sigma, alpha, weight, bg_weight
+        # return rgb_map, depth_map, feat_map # rgb, sigma, alpha, weight, bg_weight

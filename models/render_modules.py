@@ -54,6 +54,34 @@ class AlphaGridMask(torch.nn.Module):
         return (xyz_sampled-self.aabb[0]) * self.invgridSize - 1
 
 
+class MLPRender_Fea2(torch.nn.Module):
+    def __init__(self,inChanel=32, featureC=64, outChannel=32):
+        super(MLPRender_Fea2, self).__init__()
+
+        self.in_mlpC = inChanel + 3
+        self.layer1 = torch.nn.Linear(self.in_mlpC, featureC)
+        self.layer2 = torch.nn.Linear(featureC, outChannel)
+
+        self.mlp = torch.nn.Sequential(
+            self.layer1, 
+            torch.nn.ReLU(),
+            self.layer2,
+            torch.nn.ReLU(),
+        )
+
+        # torch.nn.init.constant_(self.mlp[-1].bias, 0)
+
+    def forward(self, pts, viewdirs, features):
+        indata = [features, viewdirs]
+
+        mlp_in = torch.cat(indata, dim=-1)
+
+        rgb_feat = self.mlp(mlp_in)
+        # rgb = torch.sigmoid(rgb)
+
+        return rgb_feat
+
+
 class MLPRender_Fea(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, feape=6, featureC=128):
         super(MLPRender_Fea, self).__init__()
@@ -61,13 +89,15 @@ class MLPRender_Fea(torch.nn.Module):
         self.in_mlpC = 2*viewpe*3 + 2*feape*inChanel + 3 + inChanel
         self.viewpe = viewpe
         self.feape = feape
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
+        self.layer1 = torch.nn.Linear(self.in_mlpC, featureC)
+        self.layer2 = torch.nn.Linear(featureC, featureC)
+        self.layer3 = torch.nn.Linear(featureC,3)
+        breakpoint()
 
-        # self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
+        # self.mlp = torch.nn.Sequential(self.layer1, torch.nn.ReLU(inplace=True), self.layer2, torch.nn.ReLU(inplace=True), self.layer3)
         # torch.nn.init.constant_(self.mlp[-1].bias, 0)
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
+        # self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
+        torch.nn.init.constant_(self.layer3.bias, 0)
 
     def forward(self, pts, viewdirs, features):
         indata = [features, viewdirs]
@@ -76,10 +106,16 @@ class MLPRender_Fea(torch.nn.Module):
         if self.viewpe > 0:
             indata += [positional_encoding(viewdirs, self.viewpe)]
         mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
+        x = self.layer1(mlp_in)
+        x = F.relu(x, inplace=True)
+        x = self.layer2(x)
+        x = F.relu(x, inplace=True)
+        rgb = self.layer3(x)
+        # rgb = self.mlp(mlp_in)
         rgb = torch.sigmoid(rgb)
 
-        return rgb
+        return rgb, x
+        # return rgb
 
 class MLPRender_PE(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):

@@ -11,7 +11,10 @@ class TensorVM(TensorBase):
             0.1 * torch.randn((3, self.app_n_comp + self.density_n_comp, res, res), device=device))
         self.line_coef = torch.nn.Parameter(
             0.1 * torch.randn((3, self.app_n_comp + self.density_n_comp, res, 1), device=device))
-        self.basis_mat = torch.nn.Linear(self.app_n_comp * 3, self.app_dim, bias=False, device=device)
+        self.basis_mat = torch.nn.Sequential(
+            torch.nn.Linear(self.app_n_comp * 3, self.app_dim, bias=False, device=device),
+            torch.nn.ReLU()
+        )
 
     
     def get_optparam_groups(self, lr_init_spatialxyz = 0.02, lr_init_network = 0.001):

@@ -1,21 +1,25 @@
 
 dataset_name = blender
 datadir = ./data/nerf_synthetic/lego
-expname =  tensorf_lego_VM_sr2x
+expname =  tensorf_lego_res64_grid64_feat96_sr2x_v3
 basedir = ./log
 
 n_iters = 10000
 batch_size = 4096
 nSamples = 128
-data_dim_color = 9
-featureC = 32
+# data_dim_color = 9
+data_dim_color = 32
+featureC = 64
 
 # downsample_train = 1.5625 
 downsample_train = 6.25
+# downsample_train = 12.5
 sr_ratio = 2
 
-N_voxel_init = 32768 # 32**3
-N_voxel_final = 32768 # 32**3
+N_voxel_init = 262144 # 64**3
+N_voxel_final = 262144 # 64**3
+# N_voxel_init = 32768 # 32**3
+# N_voxel_final = 32768 # 32**3
 # upsamp_list = [2000,3000,4000,5500,7000]
 # upsamp_list = [2000]
 # update_AlphaMask_list = [1000]
@@ -26,15 +30,15 @@ vis_every = 2500
 
 render_test = 1
 
-n_lamb_sigma = [2,2,2]
-n_lamb_sh = [6,6,6]
+n_lamb_sigma = [4,4,4]
+n_lamb_sh = [12,12,12]
 model_name = TensorVMSplit
 
-shadingMode = MLP_Fea
+shadingMode = MLP_Fea2
 fea2denseAct = softplus
 
-view_pe = 2
-fea_pe = 2
+view_pe = 0
+fea_pe = 0
 
 # L1_weight_inital = 8e-5
 L1_weight_inital = 4e-5
