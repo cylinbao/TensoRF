@@ -8,6 +8,14 @@ import scipy.signal
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 
 
+def interpolate_image_data(imgs, scale_factor=1.0):
+    N, W, H, C = imgs.shape
+    ds_imgs = imgs.permute(0,3,1,2)
+    ds_imgs = F.interpolate(ds_imgs, scale_factor=scale_factor, mode='bilinear')
+    ds_imgs = ds_imgs.permute(0,2,3,1)
+
+    return ds_imgs
+
 def visualize_depth_numpy(depth, minmax=None, cmap=cv2.COLORMAP_JET):
     """
     depth: (H, W)

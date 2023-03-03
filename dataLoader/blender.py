@@ -22,7 +22,6 @@ class BlenderDataset(Dataset):
         self.define_transforms()
 
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
-        # self.scene_bbox = torch.tensor([[-0.75, -1.3, -0.55], [0.75, 1.3, 1.1]])
         self.blender2opencv = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
         self.read_meta()
         self.define_proj_mat()
