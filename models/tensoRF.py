@@ -170,6 +170,9 @@ class TensorVMSplit(TensorBase):
                          {'params': self.basis_mat.parameters(), 'lr':lr_init_network}]
         if isinstance(self.renderModule, torch.nn.Module):
             grad_vars += [{'params':self.renderModule.parameters(), 'lr':lr_init_network}]
+        if isinstance(self.feature2rgb, torch.nn.Module):
+            grad_vars += [{'params':self.feature2rgb.parameters(), 'lr':lr_init_network}]
+
         return grad_vars
 
 

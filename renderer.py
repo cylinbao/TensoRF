@@ -20,7 +20,7 @@ def OctreeRender_trilinear_fast(rays, tensorf, img_wh=(64,64), chunk=4096, N_sam
         rgbs.append(rgb_map)
         depth_maps.append(depth_map)
     
-    return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
+    return torch.cat(rgbs), None, None, torch.cat(depth_maps), None, None
 
 
 def OctreeRender_trilinear_fast_with_SR(rays, tensorf, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
@@ -91,7 +91,7 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
 
 @torch.no_grad()
 def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, prtx='', N_samples=-1,
-               white_bg=False, ndc_ray=False, compute_extra_metrics=True, device='cuda'):
+               white_bg=False, ndc_ray=False, compute_extra_metrics=True, device='cuda', with_sr=False):
     PSNRs, rgb_maps, depth_maps = [], [], []
     ssims,l_alex,l_vgg=[],[],[]
     os.makedirs(savePath, exist_ok=True)
@@ -111,17 +111,23 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
         rays = test_dataset.all_rays[[idx]].to(device)
         rays = interpolate_image_data(rays, float(1/args.sr_ratio)).reshape(-1, 6)
 
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        rgb_map, sr_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        if with_sr == True:
+            rgb_map = sr_map
+
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
-        rgb_map, depth_map = rgb_map.reshape(_H, _W, 3).cpu(), depth_map.reshape(_H, _W).cpu()
+        if with_sr == False:
+            rgb_map, depth_map = rgb_map.reshape(_H, _W, 3).cpu(), depth_map.reshape(_H, _W).cpu()
+            depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
+        else:
+            rgb_map = rgb_map.reshape(H, W, 3).cpu()
 
-        depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
         if len(test_dataset.all_rgbs):
-            # gt_rgb = test_dataset.all_rgbs[[idx]].view(H, W, 3).cpu()
             gt_rgb = test_dataset.all_rgbs[[idx]]
-            gt_rgb = interpolate_image_data(gt_rgb, float(1/args.sr_ratio)).reshape(_H, _W, 3).cpu()
+            if with_sr == False:
+                gt_rgb = interpolate_image_data(gt_rgb, float(1/args.sr_ratio)).reshape(_H, _W, 3).cpu()
 
             loss = torch.mean((rgb_map - gt_rgb) ** 2)
             PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
@@ -172,6 +178,9 @@ def evaluation_sr(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5,
         tqdm._instances.clear()
     except Exception:
         pass
+
+    ds_rays = interpolate_image_data(train_rays, float(1/args.sr_ratio))
+    ds_rgbs = interpolate_image_data(train_rgbs, float(1/args.sr_ratio))
 
     W, H = test_dataset.img_wh
     _W, _H = int(W/args.sr_ratio), int(H/args.sr_ratio)

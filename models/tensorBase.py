@@ -5,7 +5,7 @@ from .sh import eval_sh_bases
 import numpy as np
 import time
 from models.render_modules import MLPRender_PE, MLPRender_Fea, MLPRender_Fea2, MLPRender, SHRender, RGBRender
-from models.render_modules import positional_encoding, raw2alpha
+from models.render_modules import positional_encoding, raw2alpha, AlphaGridMask
 from eg3d.superresolution import SuperresolutionHybrid8XDC, SuperresolutionHybrid2X
 from models.superresolution import Interpolation
 

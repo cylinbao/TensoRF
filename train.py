@@ -106,10 +106,8 @@ def render_test(args):
                            N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device)
 
 def reconstruction(args):
-
     # init dataset
     dataset = dataset_dict[args.dataset_name]
-    # train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
     train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
     test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
     white_bg = train_dataset.white_bg
@@ -121,13 +119,11 @@ def reconstruction(args):
     update_AlphaMask_list = args.update_AlphaMask_list
     n_lamb_sigma = args.n_lamb_sigma
     n_lamb_sh = args.n_lamb_sh
-
     
     if args.add_timestamp:
         logfolder = f'{args.basedir}/{args.expname}{datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")}'
     else:
         logfolder = f'{args.basedir}/{args.expname}'
-    
 
     # init log file
     os.makedirs(logfolder, exist_ok=True)
@@ -135,7 +131,6 @@ def reconstruction(args):
     os.makedirs(f'{logfolder}/imgs_rgba', exist_ok=True)
     os.makedirs(f'{logfolder}/rgba', exist_ok=True)
     summary_writer = SummaryWriter(logfolder)
-
 
     # init parameters
     # tensorVM, renderer = init_parameters(args, train_dataset.scene_bbox.to(device), reso_list[0])
@@ -156,7 +151,6 @@ def reconstruction(args):
                     pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct)
 
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
-    grad_vars += [{'params':tensorf.sr_module.parameters(), 'lr':0.01}]
     if args.lr_decay_iters > 0:
         lr_factor = args.lr_decay_target_ratio**(1/args.lr_decay_iters)
     else:
@@ -168,13 +162,13 @@ def reconstruction(args):
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
 
     #linear in logrithmic space
-    # N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
 
     torch.cuda.empty_cache()
     PSNRs,PSNRs_test = [],[0]
 
     train_rays, train_rgbs = train_dataset.all_rays, train_dataset.all_rgbs
     
+    # donwsample the training data
     ds_train_rays = interpolate_image_data(train_rays, float(1/args.sr_ratio))
     ds_train_rgbs = interpolate_image_data(train_rgbs, float(1/args.sr_ratio))
 
@@ -202,7 +196,7 @@ def reconstruction(args):
         rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
 
         #rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(ds_W, ds_H), chunk=args.batch_size,
+        rgb_map, _, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(ds_W, ds_H), chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
         loss = torch.mean((rgb_map - rgb_train) ** 2)
@@ -257,37 +251,64 @@ def reconstruction(args):
                                     prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
 
-    breakpoint()
+    if args.render_train:
+        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
+        # train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
+        PSNRs_test = evaluation(train_dataset, tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        print(f'======> {args.expname} all psnr on Train Dataset: {np.mean(PSNRs_test)} <========================')
+
+    if args.render_test:
+        os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
+        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
+        print(f'======> {args.expname} all psnr on Test Dataset: {np.mean(PSNRs_test)} <========================')
+
     # Training NeRF + SR
+    grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
+    grad_vars += [{'params':tensorf.sr_module.parameters(), 'lr':0.01}]
+    optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
+
     renderer = OctreeRender_trilinear_fast_with_SR
     imageSampler = ImageSampler(train_dataset.poses.shape[0], batch=1)
+
     pbar = tqdm(range(args.n_iters_sr), miniters=args.progress_refresh_rate, file=sys.stdout)
     for iteration in pbar:
-        ray_idx = imageSampler.nextids()
-        rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
-        # rays_train, rgb_train = allrays[ray_idx], allrgbs[ray_idx].to(device)
-        # rays_train = rays_train.reshape(H*W, 6)
-        rays_train = rays_train.permute(0,3,1,2)
-        rays_train = F.interpolate(rays_train, scale_factor=float(1/args.sr_ratio), mode='bilinear')
-        rays_train = rays_train.reshape(6, _H*_W).permute(1,0)
+        img_idx = imageSampler.nextids()
+        rgbs = train_rgbs[img_idx].to(device).reshape(-1,3)
+        ds_rays, ds_rgbs = ds_train_rays[img_idx], ds_train_rgbs[img_idx].to(device)
+        ds_rays, ds_rgbs = ds_rays.reshape(-1, 6), ds_rgbs.reshape(-1,3)
 
-        #rgb_map, alphas_map, depth_map, weights, uncertainty
-        # rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
-        #                         N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
-        rgb_map, sr_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(_W, _H), chunk=args.batch_size,
+        # rgb_map, alphas_map, depth_map, weights, uncertainty
+        rgb_map, sr_map, alphas_map, depth_map, weights, uncertainty = renderer(rays_train, tensorf, img_wh=(ds_W, ds_H), chunk=args.batch_size,
                                 N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, device=device, is_train=True)
 
-        ds_rgb_train = rgb_train.permute(0,3,1,2)
-        ds_rgb_train = F.interpolate(ds_rgb_train, scale_factor=float(1/args.sr_ratio), mode='bilinear')
-        ds_rgb_train = ds_rgb_train.reshape(3, _H*_W).permute(1,0)
-
-        # loss = torch.mean((rgb_map - rgb_train) ** 2)
-        # loss = torch.mean((sr_map - rgb_train.reshape(H*W, 3)) ** 2)
-        nerf_loss = torch.mean((rgb_map - ds_rgb_train) ** 2)
-        sr_loss = torch.mean((sr_map - rgb_train.reshape(H*W,3)) ** 2)
+        nerf_loss = torch.mean((rgb_map - ds_rgbs) ** 2)
+        sr_loss = torch.mean((sr_map - rgbs) ** 2)
 
         # loss
-        total_loss = 0.5*nerf_loss + 0.5*sr_loss
+        # total_loss = 0.5*nerf_loss + 0.5*sr_loss
+        total_loss = sr_loss
+        if Ortho_reg_weight > 0:
+            loss_reg = tensorf.vector_comp_diffs()
+            total_loss += Ortho_reg_weight*loss_reg
+            summary_writer.add_scalar('train/reg', loss_reg.detach().item(), global_step=iteration)
+        if L1_reg_weight > 0:
+            loss_reg_L1 = tensorf.density_L1()
+            total_loss += L1_reg_weight*loss_reg_L1
+            summary_writer.add_scalar('train/reg_l1', loss_reg_L1.detach().item(), global_step=iteration)
+
+        if TV_weight_density>0:
+            TV_weight_density *= lr_factor
+            loss_tv = tensorf.TV_loss_density(tvreg) * TV_weight_density
+            total_loss = total_loss + loss_tv
+            summary_writer.add_scalar('train/reg_tv_density', loss_tv.detach().item(), global_step=iteration)
+        if TV_weight_app>0:
+            TV_weight_app *= lr_factor
+            loss_tv = tensorf.TV_loss_app(tvreg)*TV_weight_app
+            total_loss = total_loss + loss_tv
+            summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -316,43 +337,9 @@ def reconstruction(args):
 
         if iteration % args.vis_every == args.vis_every - 1 and args.N_vis!=0:
             PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_vis/', N_vis=args.N_vis,
-                                    prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False)
+                                    prtx=f'{iteration:06d}_', N_samples=nSamples, white_bg = white_bg, ndc_ray=ndc_ray, compute_extra_metrics=False,
+                                    with_sr=True)
             summary_writer.add_scalar('test/psnr', np.mean(PSNRs_test), global_step=iteration)
-
-
-        # if iteration in update_AlphaMask_list:
-
-        #     if reso_cur[0] * reso_cur[1] * reso_cur[2]<256**3:# update volume resolution
-        #         reso_mask = reso_cur
-        #     new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
-        #     if iteration == update_AlphaMask_list[0]:
-        #         tensorf.shrink(new_aabb)
-        #         # tensorVM.alphaMask = None
-        #         L1_reg_weight = args.L1_weight_rest
-        #         print("continuing L1_reg_weight", L1_reg_weight)
-        #     breakpoint()
-
-
-            # if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
-            #     # filter rays outside the bbox
-            #     allrays,allrgbs = tensorf.filtering_rays(allrays,allrgbs)
-            #     trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
-
-
-        # if iteration in upsamp_list:
-        #     n_voxels = N_voxel_list.pop(0)
-        #     reso_cur = N_to_reso(n_voxels, tensorf.aabb)
-        #     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
-        #     tensorf.upsample_volume_grid(reso_cur)
-        #     breakpoint()
-
-        #     if args.lr_upsample_reset:
-        #         print("reset lr to initial")
-        #         lr_scale = 1 #0.1 ** (iteration / args.n_iters)
-        #     else:
-        #         lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-        #     grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
-        #     optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
         
     tensorf.save(f'{logfolder}/{args.expname}.th')
 
@@ -360,15 +347,17 @@ def reconstruction(args):
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
         PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device,
+                                with_sr=True)
+        print(f'======> {args.expname} all psnr on Train Dataset: {np.mean(PSNRs_test)} <========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
         PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device,
+                                with_sr=True)
         summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+        print(f'======> {args.expname} all psnr on Test Dataset: {np.mean(PSNRs_test)} <========================')
 
     if args.render_path:
         c2ws = test_dataset.render_path
