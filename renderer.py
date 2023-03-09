@@ -14,40 +14,32 @@ def OctreeRender_trilinear_fast(rays, tensorf, img_wh=(64,64), chunk=4096, N_sam
     for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
         rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
     
-        # rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
-        rgb_map, depth_map, feat_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+        rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
 
         rgbs.append(rgb_map)
         depth_maps.append(depth_map)
     
-    return torch.cat(rgbs), None, None, torch.cat(depth_maps), None, None
+    return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
 
 
-def OctreeRender_trilinear_fast_with_SR(rays, tensorf, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
+def OctreeRender_trilinear_fast_with_SR(rays, cam_params, tensorf, sr_module, img_wh=(64,64), chunk=4096, N_samples=-1, ndc_ray=False, white_bg=True, is_train=False, device='cuda'):
 
     # feats, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
-    rgbs, alphas, depth_maps, feat_maps, weights, uncertainties = [], [], [], [], [], []
+    rgb_maps, alphas, depth_maps, feat_maps, weights, uncertainties = [], [], [], [], [], []
     W, H = img_wh
     N_rays_all = rays.shape[0]
     for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
         rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk].to(device)
     
-        rgb_map, depth_map, feat_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
+        rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train, white_bg=white_bg, ndc_ray=ndc_ray, N_samples=N_samples)
 
-        rgbs.append(rgb_map)
+        rgb_maps.append(rgb_map)
         depth_maps.append(depth_map)
-        feat_maps.append(feat_map)
 
-    rgbs = torch.cat(rgbs)
-    feat_maps = torch.cat(feat_maps)
-    # depth_maps = torch.cat(depth_maps)
+    rgb_maps = torch.cat(rgb_maps)
+    rgbs = rgb_maps[:,:3]
 
-    ws = positional_encoding(rays[0,:3], 12).view(1,1,-1).to(device)
-    _rgbs = rgbs.permute(1, 0).view(1, -1, W, H)
-    feat_maps = feat_maps.permute(1, 0).view(1, -1, W, H)
-    # rgb_map = feat_map[:, :3]
-    sr_image = tensorf.sr_module(_rgbs, feat_maps, ws)
-    sr_image = sr_image.permute(0,2,3,1).view(-1,3)
+    sr_image = sr_module(cam_params, rgbs, rgb_maps, (W, H), device)
     
     return rgbs, sr_image, None, torch.cat(depth_maps), None, None
 
@@ -91,7 +83,7 @@ def evaluation_profile(test_dataset, tensorf, args, renderer, N_vis=5, N_samples
 
 @torch.no_grad()
 def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, prtx='', N_samples=-1,
-               white_bg=False, ndc_ray=False, compute_extra_metrics=True, device='cuda', with_sr=False):
+               white_bg=False, ndc_ray=False, compute_extra_metrics=True, device='cuda'):
     PSNRs, rgb_maps, depth_maps = [], [], []
     ssims,l_alex,l_vgg=[],[],[]
     os.makedirs(savePath, exist_ok=True)
@@ -103,7 +95,7 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
         pass
 
     W, H = test_dataset.img_wh
-    _W, _H = int(W/args.sr_ratio), int(H/args.sr_ratio)
+    ds_W, ds_H = int(W/args.sr_ratio), int(H/args.sr_ratio)
     near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
     idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
@@ -111,23 +103,15 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
         rays = test_dataset.all_rays[[idx]].to(device)
         rays = interpolate_image_data(rays, float(1/args.sr_ratio)).reshape(-1, 6)
 
-        rgb_map, sr_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
-        if with_sr == True:
-            rgb_map = sr_map
 
-        rgb_map = rgb_map.clamp(0.0, 1.0)
-
-        if with_sr == False:
-            rgb_map, depth_map = rgb_map.reshape(_H, _W, 3).cpu(), depth_map.reshape(_H, _W).cpu()
-            depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
-        else:
-            rgb_map = rgb_map.reshape(H, W, 3).cpu()
+        rgb_map, depth_map = rgb_map.reshape(ds_H, ds_W, 3).cpu(), depth_map.reshape(ds_H, ds_W).cpu()
+        depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
 
         if len(test_dataset.all_rgbs):
             gt_rgb = test_dataset.all_rgbs[[idx]]
-            if with_sr == False:
-                gt_rgb = interpolate_image_data(gt_rgb, float(1/args.sr_ratio)).reshape(_H, _W, 3).cpu()
+            gt_rgb = interpolate_image_data(gt_rgb, float(1/args.sr_ratio)).reshape(ds_H, ds_W, 3).cpu()
 
             loss = torch.mean((rgb_map - gt_rgb) ** 2)
             PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
@@ -141,17 +125,16 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
                 l_vgg.append(l_v)
 
         rgb_map = (rgb_map.numpy() * 255).astype('uint8')
-        # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
         rgb_maps.append(rgb_map)
-        # depth_maps.append(depth_map)
+        depth_maps.append(depth_map)
         if savePath is not None:
             imageio.imwrite(f'{savePath}/{prtx}{idx:03d}.png', rgb_map)
-            # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
+            rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
             rgb_map = np.concatenate((rgb_map), axis=1)
             imageio.imwrite(f'{savePath}/rgbd/{prtx}{idx:03d}.png', rgb_map)
 
     imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
-    # imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
+    imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
 
     if PSNRs:
         psnr = np.mean(np.asarray(PSNRs))
@@ -167,9 +150,9 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
     return PSNRs
 
 @torch.no_grad()
-def evaluation_sr(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, prtx='', N_samples=-1,
+def evaluation_sr(test_dataset, tensorf, sr_module, args, renderer_sr, savePath=None, N_vis=5, prtx='', N_samples=-1,
                white_bg=False, ndc_ray=False, compute_extra_metrics=True, device='cuda'):
-    PSNRs, rgb_maps, depth_maps = [], [], []
+    PSNRs, sr_maps = [], []
     ssims,l_alex,l_vgg=[],[],[]
     os.makedirs(savePath, exist_ok=True)
     os.makedirs(savePath+"/rgbd", exist_ok=True)
@@ -179,57 +162,41 @@ def evaluation_sr(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5,
     except Exception:
         pass
 
-    ds_rays = interpolate_image_data(train_rays, float(1/args.sr_ratio))
-    ds_rgbs = interpolate_image_data(train_rgbs, float(1/args.sr_ratio))
-
+    data_intrinsics = test_dataset.intrinsics.to(device)
     W, H = test_dataset.img_wh
-    _W, _H = int(W/args.sr_ratio), int(H/args.sr_ratio)
-    near_far = test_dataset.near_far
+    # near_far = test_dataset.near_far
     img_eval_interval = 1 if N_vis < 0 else max(test_dataset.all_rays.shape[0] // N_vis,1)
     idxs = list(range(0, test_dataset.all_rays.shape[0], img_eval_interval))
     for idx in tqdm(idxs, file=sys.stdout):
         rays = test_dataset.all_rays[[idx]]
-        # rays = rays.reshape(H*W, -1)
-        rays = rays.to(device).permute(0,3,1,2)
-        rays = F.interpolate(rays, scale_factor=float(1/args.sr_ratio), mode='bilinear')
-        rays = rays.reshape(6, _H*_W).permute(1,0)
+        rays = interpolate_image_data(rays, float(1/args.sr_ratio)).reshape(-1, 6)
 
-        # rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
-        #                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device)
-        rgb_map, sr_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
+        cam2world_pose = test_dataset.poses[idx].to(device)
+        cam_params = torch.cat([cam2world_pose.reshape(-1, 16), data_intrinsics.reshape(-1, 9)], 1)
+
+        rgb_map, sr_map, _, depth_map, _, _ = renderer_sr(rays, cam_params, tensorf, sr_module, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
-        rgb_map = sr_map
-        rgb_map = rgb_map.clamp(0.0, 1.0)
+        sr_map = sr_map.reshape(H, W, 3).cpu()
 
-        # rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()
-        rgb_map = rgb_map.reshape(H, W, 3).cpu()
-
-        # depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
         if len(test_dataset.all_rgbs):
             gt_rgb = test_dataset.all_rgbs[[idx]].view(H, W, 3).cpu()
-            loss = torch.mean((rgb_map - gt_rgb) ** 2)
+            loss = torch.mean((sr_map - gt_rgb) ** 2)
             PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
 
             if compute_extra_metrics:
-                ssim = rgb_ssim(rgb_map, gt_rgb, 1)
-                l_a = rgb_lpips(gt_rgb.numpy(), rgb_map.numpy(), 'alex', tensorf.device)
-                l_v = rgb_lpips(gt_rgb.numpy(), rgb_map.numpy(), 'vgg', tensorf.device)
+                ssim = rgb_ssim(sr_map, gt_rgb, 1)
+                l_a = rgb_lpips(gt_rgb.numpy(), sr_map.numpy(), 'alex', tensorf.device)
+                l_v = rgb_lpips(gt_rgb.numpy(), sr_map.numpy(), 'vgg', tensorf.device)
                 ssims.append(ssim)
                 l_alex.append(l_a)
                 l_vgg.append(l_v)
 
-        rgb_map = (rgb_map.cpu().numpy() * 255).astype('uint8')
-        # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
-        rgb_maps.append(rgb_map)
-        # depth_maps.append(depth_map)
+        sr_map = (sr_map.cpu().numpy() * 255).astype('uint8')
+        sr_maps.append(sr_map)
         if savePath is not None:
-            imageio.imwrite(f'{savePath}/{prtx}{idx:03d}.png', rgb_map)
-            # rgb_map = np.concatenate((rgb_map, depth_map), axis=1)
-            rgb_map = np.concatenate((rgb_map), axis=1)
-            imageio.imwrite(f'{savePath}/rgbd/{prtx}{idx:03d}.png', rgb_map)
+            imageio.imwrite(f'{savePath}/{prtx}{idx:03d}.png', sr_map)
 
-    imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(rgb_maps), fps=30, quality=10)
-    # imageio.mimwrite(f'{savePath}/{prtx}depthvideo.mp4', np.stack(depth_maps), fps=30, quality=10)
+    imageio.mimwrite(f'{savePath}/{prtx}video.mp4', np.stack(sr_maps), fps=30, quality=10)
 
     if PSNRs:
         psnr = np.mean(np.asarray(PSNRs))
@@ -240,7 +207,6 @@ def evaluation_sr(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5,
             np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr, ssim, l_a, l_v]))
         else:
             np.savetxt(f'{savePath}/{prtx}mean.txt', np.asarray([psnr]))
-
 
     return PSNRs
 
