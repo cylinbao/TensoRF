@@ -326,8 +326,8 @@ class TensorBase(torch.nn.Module):
 
         if white_bg or (is_train and torch.rand((1,))<0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
-        
-        rgb_map = rgb_map.clamp(0,1)
+
+        # rgb_map = rgb_map.clamp(0,1)
 
         with torch.no_grad():
             depth_map = torch.sum(weight * z_vals, -1)

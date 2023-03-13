@@ -66,18 +66,16 @@ class MLPRender_Fea2(torch.nn.Module):
             self.layer1, 
             torch.nn.ReLU(),
             self.layer2,
-            torch.nn.ReLU(),
+            torch.nn.Sigmoid(),
+            # torch.nn.ReLU(),
         )
-
         # torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, pts, viewdirs, features):
         indata = [features, viewdirs]
 
         mlp_in = torch.cat(indata, dim=-1)
-
         rgb_feat = self.mlp(mlp_in)
-        # rgb = torch.sigmoid(rgb)
 
         return rgb_feat
 

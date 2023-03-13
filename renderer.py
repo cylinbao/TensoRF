@@ -37,11 +37,9 @@ def OctreeRender_trilinear_fast_with_SR(rays, cam_params, tensorf, sr_module, im
         depth_maps.append(depth_map)
 
     rgb_maps = torch.cat(rgb_maps)
-    rgbs = rgb_maps[:,:3]
-
-    sr_image = sr_module(cam_params, rgbs, rgb_maps, (W, H), device)
+    rgbs = sr_module(cam_params, rgb_maps, (W, H), device)
     
-    return rgbs, sr_image, None, torch.cat(depth_maps), None, None
+    return rgbs, None, torch.cat(depth_maps), None, None
 
 
 @torch.no_grad()
@@ -106,6 +104,7 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, N_vis=5, pr
         rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
 
+        rgb_map = rgb_map.clamp(0,1)
         rgb_map, depth_map = rgb_map.reshape(ds_H, ds_W, 3).cpu(), depth_map.reshape(ds_H, ds_W).cpu()
         depth_map, _ = visualize_depth_numpy(depth_map.numpy(), near_far)
 
@@ -174,8 +173,9 @@ def evaluation_sr(test_dataset, tensorf, sr_module, args, renderer_sr, savePath=
         cam2world_pose = test_dataset.poses[idx].to(device)
         cam_params = torch.cat([cam2world_pose.reshape(-1, 16), data_intrinsics.reshape(-1, 9)], 1)
 
-        rgb_map, sr_map, _, depth_map, _, _ = renderer_sr(rays, cam_params, tensorf, sr_module, chunk=args.batch_size, N_samples=N_samples,
+        sr_map, _, depth_map, _, _ = renderer_sr(rays, cam_params, tensorf, sr_module, chunk=args.batch_size, N_samples=N_samples,
                                                ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        sr_map = sr_map.clamp(0,1)
         sr_map = sr_map.reshape(H, W, 3).cpu()
 
         if len(test_dataset.all_rgbs):
