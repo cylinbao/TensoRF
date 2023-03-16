@@ -89,10 +89,9 @@ class MLPRender_Fea(torch.nn.Module):
         self.feape = feape
         self.layer1 = torch.nn.Linear(self.in_mlpC, featureC)
         self.layer2 = torch.nn.Linear(featureC, featureC)
-        self.layer3 = torch.nn.Linear(featureC,3)
-        breakpoint()
+        self.layer3 = torch.nn.Linear(featureC, 3)
 
-        # self.mlp = torch.nn.Sequential(self.layer1, torch.nn.ReLU(inplace=True), self.layer2, torch.nn.ReLU(inplace=True), self.layer3)
+        self.mlp = torch.nn.Sequential(self.layer1, torch.nn.ReLU(inplace=True), self.layer2, torch.nn.ReLU(inplace=True), self.layer3)
         # torch.nn.init.constant_(self.mlp[-1].bias, 0)
         # self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True))
         torch.nn.init.constant_(self.layer3.bias, 0)
@@ -104,16 +103,11 @@ class MLPRender_Fea(torch.nn.Module):
         if self.viewpe > 0:
             indata += [positional_encoding(viewdirs, self.viewpe)]
         mlp_in = torch.cat(indata, dim=-1)
-        x = self.layer1(mlp_in)
-        x = F.relu(x, inplace=True)
-        x = self.layer2(x)
-        x = F.relu(x, inplace=True)
-        rgb = self.layer3(x)
-        # rgb = self.mlp(mlp_in)
+
+        rgb = self.mlp(mlp_in)
         rgb = torch.sigmoid(rgb)
 
-        return rgb, x
-        # return rgb
+        return rgb
 
 class MLPRender_PE(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):

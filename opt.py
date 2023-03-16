@@ -14,15 +14,18 @@ def config_parser(cmd=None):
                         help='input data directory')
     parser.add_argument("--progress_refresh_rate", type=int, default=10,
                         help='how many iterations to show psnrs or iters')
-
     parser.add_argument('--with_depth', action='store_true')
     parser.add_argument('--downsample_train', type=float, default=1.0)
     parser.add_argument('--downsample_test', type=float, default=1.0)
-    parser.add_argument('--sr_ratio', type=int, default=1,
-                        help="super resolution ratio")
-
     parser.add_argument('--model_name', type=str, default='TensorVMSplit',
                         choices=['TensorVMSplit', 'TensorCP'])
+
+    parser.add_argument('--use_sr', action='store_true', default=False,
+                        help="whether to use super resolution module")
+    parser.add_argument('--sr_ratio', type=int, default=1,
+                        help="super resolution ratio")
+    parser.add_argument('--sr_method', type=str, default='None', choices=["None", "Bilinear", "Eg3d", "Edsr"],
+                        help="which super resolution module to use")
 
     # loader options
     parser.add_argument("--batch_size", type=int, default=4096)
@@ -38,6 +41,8 @@ def config_parser(cmd=None):
                         help='learning rate')    
     parser.add_argument("--lr_basis", type=float, default=1e-3,
                         help='learning rate')
+    parser.add_argument("--lr_sr", type=float, default=0.01,
+                        help='learning rate for sr module')    
     parser.add_argument("--lr_decay_iters", type=int, default=-1,
                         help = 'number of iterations the lr will decay to the target ratio; -1 will set it to n_iters')
     parser.add_argument("--lr_decay_target_ratio", type=float, default=0.1,
@@ -83,8 +88,6 @@ def config_parser(cmd=None):
                         help='number of pe for features')
     parser.add_argument("--featureC", type=int, default=128,
                         help='hidden feature channel in MLP')
-    
-
 
     parser.add_argument("--ckpt", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
@@ -111,8 +114,6 @@ def config_parser(cmd=None):
     ## blender flags
     parser.add_argument("--white_bkgd", action='store_true',
                         help='set to render synthetic data on a white bkgd (always use for dvoxels)')
-
-
 
     parser.add_argument('--N_voxel_init',
                         type=int,

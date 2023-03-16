@@ -6,13 +6,15 @@ import numpy as np
 import time
 from models.render_modules import MLPRender_PE, MLPRender_Fea, MLPRender_Fea2, MLPRender, SHRender, RGBRender
 from models.render_modules import positional_encoding, raw2alpha, AlphaGridMask
+from models.superresolution import SR_Module
 
 class TensorBase(torch.nn.Module):
     def __init__(self, aabb, gridSize, device, density_n_comp = 8, appearance_n_comp = 24, app_dim = 27,
                     shadingMode = 'MLP_PE', alphaMask = None, near_far=[2.0,6.0],
                     density_shift = -10, alphaMask_thres=0.001, distance_scale=25, rayMarch_weight_thres=0.0001,
                     pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus'):
+                    fea2denseAct = 'softplus', 
+                    use_sr = False, sr_method = "None", sr_ratio = 1.0):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
@@ -31,6 +33,8 @@ class TensorBase(torch.nn.Module):
         self.near_far = near_far
         self.step_ratio = step_ratio
 
+        self.use_sr = use_sr
+
         self.update_stepSize(gridSize)
 
         self.matMode = [[0,1], [0,2], [1,2]]
@@ -41,6 +45,12 @@ class TensorBase(torch.nn.Module):
 
         self.shadingMode, self.pos_pe, self.view_pe, self.fea_pe, self.featureC = shadingMode, pos_pe, view_pe, fea_pe, featureC
         self.init_render_func(shadingMode, pos_pe, view_pe, fea_pe, featureC, device)
+
+        self.mlp_out_dim = 3
+
+        if self.use_sr == True:
+            self.sr_module = SR_Module(sr_method=sr_method, device=device, sr_ratio=sr_ratio)
+            self.mlp_out_dim = 32
 
     def init_render_func(self, shadingMode, pos_pe, view_pe, fea_pe, featureC, device):
         if shadingMode == 'MLP_PE':
@@ -283,13 +293,13 @@ class TensorBase(torch.nn.Module):
         # sample points
         viewdirs = rays_chunk[:, 3:6]
         if ndc_ray:
-            xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
+            xyz_sampled, z_vals, ray_valid = self.sample_ray_ndc(rays_chunk[:, :3], viewdirs, is_train=is_train, N_samples=N_samples)
             dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
             rays_norm = torch.norm(viewdirs, dim=-1, keepdim=True)
             dists = dists * rays_norm
             viewdirs = viewdirs / rays_norm
         else:
-            xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, is_train=is_train,N_samples=N_samples)
+            xyz_sampled, z_vals, ray_valid = self.sample_ray(rays_chunk[:, :3], viewdirs, is_train=is_train, N_samples=N_samples)
             dists = torch.cat((z_vals[:, 1:] - z_vals[:, :-1], torch.zeros_like(z_vals[:, :1])), dim=-1)
         viewdirs = viewdirs.view(-1, 1, 3).expand(xyz_sampled.shape)
         
@@ -302,7 +312,7 @@ class TensorBase(torch.nn.Module):
 
 
         sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        rgb_feat = torch.zeros((*xyz_sampled.shape[:2], 32), device=xyz_sampled.device)
+        rgb_feat = torch.zeros((*xyz_sampled.shape[:2], self.mlp_out_dim), device=xyz_sampled.device)
 
         if ray_valid.any():
             xyz_sampled = self.normalize_coord(xyz_sampled)

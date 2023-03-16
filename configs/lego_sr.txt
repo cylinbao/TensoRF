@@ -1,42 +1,43 @@
 
 dataset_name = blender
 datadir = ./data/nerf_synthetic/lego
-expname =  tensorf_lego_res128_grid64_feat192_featC64_nSamples512_baseline
+expname =  tensorf_lego_res64_grid64_feat96_edsr2x_scratch_30k
 basedir = ./log
+# ckpt = ./ckpts/tensorf_lego_res64_grid64_feat96_nSamples128_baseline.th
 
-n_iters = 10000
+n_iters = 30000
 batch_size = 4096
-nSamples = 256
+nSamples = 128
 data_dim_color = 32
 featureC = 64
 
 # downsample_train = 1.5625 
-# downsample_train = 12.5
 downsample_train = 6.25
-# downsample_test = 6.25
-# downsample_test = 3.125
+# downsample_train = 12.5
+use_sr = True
+sr_ratio = 2
+sr_method = Edsr
 
 N_voxel_init = 262144 # 64**3
 N_voxel_final = 262144 # 64**3
 # N_voxel_init = 32768 # 32**3
 # N_voxel_final = 32768 # 32**3
+lr_sr = 1e-3
 lr_decay_target_ratio = 0.9
 
-N_vis = 10
-vis_every = 2000
+N_vis = 10 
+vis_every = 10000
 
 render_train = 1
 render_test = 1
 
 # n_lamb_sigma = [2,2,2]
 # n_lamb_sh = [6,6,6]
-# n_lamb_sigma = [4,4,4]
-# n_lamb_sh = [12,12,12]
-n_lamb_sigma = [8,8,8]
-n_lamb_sh = [24,24,24]
+n_lamb_sigma = [4,4,4]
+n_lamb_sh = [12,12,12]
 model_name = TensorVMSplit
 
-shadingMode = MLP_Fea
+shadingMode = MLP_Fea2
 fea2denseAct = softplus
 
 view_pe = 0
